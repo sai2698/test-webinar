@@ -1,0 +1,202 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /*
+   * Semantic palette. Every value is a bare RGB triplet so Tailwind can apply
+   * opacity modifiers (`bg-panel/60`). The dark values are the default because
+   * the room, replay and landing pages are dark-only by design; the console
+   * opts into light mode by putting `.theme-light` on its own root element.
+   */
+  --surface: 5 6 10;
+  --panel: 15 18 32;
+  --panel-2: 20 24 41;
+  --line: 35 42 61;
+  --fg: 232 236 246;
+  --muted: 148 160 184;
+  --subtle: 100 112 138;
+
+  --shadow-card: 0 1px 0 0 rgba(255, 255, 255, 0.05) inset, 0 24px 60px -30px rgba(0, 0, 0, 0.9);
+  --shadow-pop: 0 24px 70px -24px rgba(0, 0, 0, 0.85);
+}
+
+.theme-light {
+  --surface: 246 247 251;
+  --panel: 255 255 255;
+  --panel-2: 241 243 249;
+  --line: 226 231 240;
+  --fg: 15 18 32;
+  --muted: 91 100 120;
+  --subtle: 139 147 167;
+
+  --shadow-card: 0 1px 2px 0 rgba(16, 24, 40, 0.04), 0 12px 32px -18px rgba(16, 24, 40, 0.28);
+  --shadow-pop: 0 24px 60px -20px rgba(16, 24, 40, 0.28);
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-950 text-slate-200 antialiased;
+  font-family: var(--font-sans);
+  background-image:
+    radial-gradient(900px 500px at 15% -10%, rgba(61, 92, 255, 0.16), transparent 65%),
+    radial-gradient(700px 400px at 90% 0%, rgba(255, 159, 28, 0.09), transparent 60%);
+  background-attachment: fixed;
+}
+
+::selection {
+  @apply bg-brand-500/40 text-white;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-white/10;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-white/20;
+}
+
+.theme-light ::-webkit-scrollbar-thumb {
+  background: rgb(15 18 32 / 0.16);
+}
+.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: rgb(15 18 32 / 0.28);
+}
+
+@layer components {
+  .glass {
+    @apply rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl;
+  }
+
+  .glass-strong {
+    @apply rounded-2xl border border-white/10 bg-ink-850/80 backdrop-blur-2xl;
+  }
+
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold
+      transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-gradient-to-b from-brand-400 to-brand-600 text-white shadow-glow
+      hover:from-brand-300 hover:to-brand-500 active:scale-[0.98];
+  }
+
+  .btn-accent {
+    @apply btn bg-gradient-to-b from-accent-400 to-accent-600 text-ink-950
+      hover:from-accent-400 hover:to-accent-500 active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply btn border border-white/10 bg-white/[0.03] text-slate-200
+      hover:border-white/20 hover:bg-white/[0.07] active:scale-[0.98];
+  }
+
+  .btn-danger {
+    @apply btn bg-red-500/90 text-white hover:bg-red-500 active:scale-[0.98];
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-white/10 bg-ink-900/70 px-4 py-2.5 text-sm text-slate-100
+      placeholder:text-slate-500 outline-none transition
+      focus:border-brand-400/60 focus:ring-2 focus:ring-brand-500/25;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05]
+      px-3 py-1 text-xs font-medium text-slate-300;
+  }
+
+  .card {
+    @apply glass shadow-card;
+  }
+
+  .divider {
+    @apply h-px w-full bg-gradient-to-r from-transparent via-white/10 to-transparent;
+  }
+
+  .text-gradient {
+    @apply bg-gradient-to-r from-white via-brand-100 to-brand-300 bg-clip-text text-transparent;
+  }
+}
+
+/*
+ * Light-mode overrides for the shared component classes. These are scoped to
+ * `.theme-light` so the dark-only surfaces (room, replay, landing) keep their
+ * original look no matter what the console is set to.
+ */
+@layer components {
+  .theme-light .glass {
+    @apply border-line bg-panel/80;
+  }
+  .theme-light .glass-strong {
+    @apply border-line bg-panel/95;
+  }
+  .theme-light .btn-ghost {
+    @apply border-line bg-panel text-fg hover:border-brand-300 hover:bg-panel-2;
+  }
+  .theme-light .input {
+    @apply border-line bg-panel text-fg placeholder:text-subtle focus:border-brand-400 focus:ring-brand-500/20;
+  }
+  .theme-light .label {
+    @apply text-muted;
+  }
+  .theme-light .chip {
+    @apply border-line bg-panel-2 text-muted;
+  }
+  .theme-light .card {
+    @apply border-line bg-panel shadow-card;
+  }
+  .theme-light .divider {
+    @apply bg-gradient-to-r from-transparent via-line to-transparent;
+  }
+  .theme-light .text-gradient {
+    @apply from-ink-950 via-brand-700 to-brand-500;
+  }
+  .theme-light ::selection {
+    @apply bg-brand-500/25 text-ink-950;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .animate-delay-100 {
+    animation-delay: 100ms;
+  }
+  .animate-delay-200 {
+    animation-delay: 200ms;
+  }
+  .animate-delay-300 {
+    animation-delay: 300ms;
+  }
+  .animate-delay-500 {
+    animation-delay: 500ms;
+  }
+}

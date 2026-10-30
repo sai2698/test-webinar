@@ -1,0 +1,86 @@
+# ─────────────────────────────────────────────────────────────
+# nginx reverse proxy — rendered from a template.
+#
+# TLS IS NOT TERMINATED HERE.
+# A Caddy instance on the VPS owns ports 80/443, obtains and renews the
+# certificate, and forwards plain HTTP to this nginx on HTTP_PORT (5173).
+# nginx therefore only ever speaks plain HTTP and needs no certs, no ACME
+# webroot, and no SSL_ENABLED switch.
+#
+#   internet ──443/TLS──> Caddy ──5173/HTTP──> nginx ──> web (3000) / api (4000)
+#
+# Variables (defaults live in docker-compose.yml / .env):
+#   HTTP_PORT, SERVER_NAME, API_PORT, WEB_PORT
+# ─────────────────────────────────────────────────────────────
+
+upstream webinar_web {
+    server 127.0.0.1:${WEB_PORT};
+    keepalive 32;
+}
+
+upstream webinar_api {
+    server 127.0.0.1:${API_PORT};
+    keepalive 32;
+}
+
+# Only send `Connection: upgrade` when the client actually asked for it.
+# Hardcoding it would break ordinary HTTP requests.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen ${HTTP_PORT};
+    server_name ${SERVER_NAME};
+
+    client_max_body_size 20m;
+
+    # Caddy is the only client we expect. Trust its forwarded headers so the
+    # app sees the real visitor IP and the real scheme (https), not 127.0.0.1
+    # and http. Harmless when Caddy is not in front.
+    set_real_ip_from 127.0.0.1;
+    set_real_ip_from ::1;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    # ── Next.js frontend ──────────────────────────────────────
+    location / {
+        proxy_pass http://webinar_web;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+    }
+
+    # ── Socket.IO (WebSocket upgrade required) ────────────────
+    # The long read timeout is what keeps a webinar socket alive through a
+    # quiet stretch; the default 60s would drop idle participants.
+    location /socket.io/ {
+        proxy_pass http://webinar_api;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    # ── REST API ──────────────────────────────────────────────
+    location /api/ {
+        proxy_pass http://webinar_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_read_timeout 120s;
+    }
+}

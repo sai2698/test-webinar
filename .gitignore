@@ -1,0 +1,28 @@
+node_modules/
+dist/
+.next/
+out/
+build/
+*.log
+.env
+.env.local
+.env.*.local
+dev.db
+dev.db-journal
+*.db
+*.db-journal
+# Recorded media and the timeline JSON written next to it.
+recordings/
+.DS_Store
+coverage/
+.turbo/
+*.tsbuildinfo
+apps/server/prisma/migrations/
+
+# Rendered from infra/coturn/turnserver.conf.template by ./deploy.sh — contains
+# the TURN password, so it must never be committed.
+infra/coturn/turnserver.conf
+
+# Generated nginx config (rendered from the template) and database dumps.
+infra/nginx/rendered/
+backups/

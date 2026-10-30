@@ -1,0 +1,745 @@
+// Prisma schema for the webinar platform.
+//
+// Local development uses SQLite so the project runs with zero external
+// services. To deploy on PostgreSQL:
+//   1. change `provider` below to "postgresql"
+//   2. set DATABASE_URL=postgresql://user:pass@host:5432/webinar
+//   3. run `npm run db:push`
+//
+// Enum-like columns are stored as String so the same schema works on both
+// engines. The canonical values live in packages/shared/src/index.ts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  phone        String?
+  role         String   @default("PARTICIPANT") // ADMIN | HOST | MODERATOR | PARTICIPANT
+  passwordHash String?
+  createdAt    DateTime @default(now())
+
+  registrations Registration[]
+  hostedWebinars Webinar[]  @relation("WebinarHost")
+  createdWebinars Webinar[] @relation("WebinarCreator")
+  moderations   WebinarModerator[]
+  quizAnswers   QuizAnswer[]
+  pollVotes     PollVote[]
+  enrollments   Enrollment[]
+  payments      Payment[]
+  messages      ChatMessage[]
+  questions     QaQuestion[]
+  questionVotes QaQuestionVote[]
+  ctaClicks     CtaClick[]
+
+  // webinar.gg parity
+  cohostRoles    WebinarCohost[]
+  webhookEndpoints WebhookEndpoint[]
+  apiTokens      ApiToken[]
+}
+
+model Webinar {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  description String   @default("")
+  bannerUrl   String?
+  startsAt    DateTime
+  durationMins Int     @default(60)
+  timezone    String   @default("Asia/Kolkata")
+  status      String   @default("DRAFT") // DRAFT | SCHEDULED | LIVE | ENDED
+
+  // admin-chosen options
+  allowMic            Boolean @default(false)
+  allowVideo          Boolean @default(false)
+  requireRegistration Boolean @default(true)
+  requirePayment      Boolean @default(false)
+  priceInPaise        Int     @default(0)
+  currency            String  @default("INR")
+  chatEnabled         Boolean @default(true)
+  handRaiseEnabled    Boolean @default(true)
+  maxParticipants     Int?
+
+  // access control
+  /// When set, joining requires this passcode in addition to registration.
+  passcode            String?
+  /// When true, only people with a registration row may enter — no walk-ins.
+  inviteOnly          Boolean @default(false)
+  /// When true, a signed-in account is required (no guest join).
+  requireSignIn       Boolean @default(false)
+  /// When true, a registration lands PENDING and a host must approve it before
+  /// the attendee can enter. This is webinar.gg's `requireApproval`.
+  requireApproval     Boolean @default(false)
+
+  // participant sidebar tabs
+  /// Whether participants get a People tab. Off by default: a host running a
+  /// broadcast does not want the audience browsing each other, and the roster
+  /// is staff information until the host decides otherwise.
+  showPeopleTab       Boolean @default(false)
+  /// Whether participants get a Q&A tab. Off by default — a host who has not
+  /// asked for questions should not present an empty queue.
+  showQaTab           Boolean @default(false)
+  /// Whether participants get a Polls tab. Off by default; a launched poll
+  /// still reaches everyone as a modal, so this only governs the sidebar.
+  showPollsTab        Boolean @default(false)
+
+  // participant media visibility
+  /// Whether participants may see and hear each other.
+  ///
+  /// Off by default: a webinar is a broadcast, and an attendee who joins a
+  /// product demo does not expect their camera to appear in every other
+  /// attendee's grid. When on, the SFU creates consumers between participants
+  /// so the room behaves like a meeting. Staff are always mutually visible
+  /// either way.
+  showParticipantsToEachOther Boolean @default(false)
+
+  // presentation
+  /// Burn the viewer's id and email (or name, for a guest) over the video.
+  /// Deters screen-recording leaks: a leaked recording identifies its source.
+  watermarkEnabled    Boolean @default(false)
+  /// Show the live viewer count to participants. Off by default — a host may
+  /// not want a small audience to look small.
+  showLiveUsersCount  Boolean @default(false)
+
+  // co-host policy
+  /// Whether a co-host may start the session before the owner joins.
+  cohostStartWithoutHost Boolean @default(false)
+  /// JSON permission map, merged over DEFAULT_COHOST_PERMISSIONS at read time.
+  cohostPermissionsJson  String  @default("{}")
+
+  // series
+  /// Set when this webinar is one occurrence of a recurring series.
+  seriesId        String?
+  /// 0-based position within the series.
+  occurrenceIndex Int?
+
+  // embed
+  /// Whether the room may be framed by a third-party page.
+  embedEnabled         Boolean @default(false)
+  /// JSON array of origins allowed to frame the room. Empty means none.
+  embedAllowedOriginsJson String @default("[]")
+
+  // analytics
+  /// JSON map of third-party analytics ids (GA4, Meta Pixel, Clarity, GTM).
+  /// Stored per webinar so a host can attribute one campaign to one event.
+  analyticsConfigJson  String  @default("{}")
+
+  // automation
+  /// JSON bundle of simulated personas, chat, Q&A and timed cues. Imported
+  /// from a file so a rehearsal can be replayed identically.
+  automationBundleJson String  @default("{}")
+
+  // premiere (pre-recorded webinar)
+  /// When set, this webinar plays back a recording instead of hosting live
+  /// media. The recording is the content; the webinar is the event around it.
+  premiereRecordingId String?
+  /// When the premiere started. Every viewer's position is derived from this,
+  /// so the audience watches in sync — a recording presented as a live session.
+  premiereStartedAt   DateTime?
+
+  /// When the host opened the session. Participants may join before this and
+  /// wait; `null` means the room is still in its waiting state. Persisted so a
+  /// reload — or a room rebuilt after the last peer left — does not send an
+  /// already-running audience back to the waiting screen.
+  startedAt           DateTime?
+
+  hostId      String
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  host          User               @relation("WebinarHost", fields: [hostId], references: [id])
+  createdBy     User               @relation("WebinarCreator", fields: [createdById], references: [id])
+  registrations Registration[]
+  moderators    WebinarModerator[]
+  quizzes       Quiz[]
+  polls         Poll[]
+  ctas          Cta[]
+  messages      ChatMessage[]
+  payments      Payment[]
+  recordings    Recording[]
+  questions     QaQuestion[]
+
+  // webinar.gg parity
+  customFields       CustomField[]
+  cohosts            WebinarCohost[]
+  streamDestinations StreamDestination[]
+  joinTokens         JoinToken[]
+  automationCues     AutomationCue[]
+  metrics            WebinarMetrics?
+  series             WebinarSeries?      @relation("WebinarSeriesOccurrences", fields: [seriesId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([startsAt])
+  @@index([seriesId])
+}
+
+model WebinarModerator {
+  webinarId String
+  userId    String
+
+  webinar Webinar @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([webinarId, userId])
+}
+
+model Registration {
+  id        String   @id @default(cuid())
+  webinarId String
+  userId    String
+  joinToken String   @unique
+  paid      Boolean  @default(false)
+  attended  Boolean  @default(false)
+  /// PENDING | APPROVED | REJECTED | WAITLISTED | CANCELLED
+  ///
+  /// Always populated: a webinar that does not require approval creates its
+  /// registrations APPROVED, so no consumer has to branch on "approval is off".
+  status    String   @default("APPROVED")
+  /// Why a host rejected or waitlisted someone. Shown to the attendee.
+  statusNote String?
+  statusChangedAt DateTime?
+  createdAt DateTime @default(now())
+
+  webinar Webinar @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  customResponses CustomFieldResponse[]
+
+  @@unique([webinarId, userId])
+  @@index([webinarId])
+  @@index([webinarId, status])
+}
+
+model Payment {
+  id                String   @id @default(cuid())
+  userId            String
+  webinarId         String?
+  ctaId             String?
+  courseId          String?
+  razorpayOrderId   String   @unique
+  razorpayPaymentId String?  @unique
+  razorpaySignature String?
+  amountPaise       Int
+  status            String   @default("CREATED") // CREATED | PAID | FAILED | REFUNDED
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  webinar Webinar? @relation(fields: [webinarId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Course {
+  id          String  @id @default(cuid())
+  title       String
+  description String?
+  pricePaise  Int
+  currency    String  @default("INR")
+
+  enrollments Enrollment[]
+  ctas        Cta[]
+}
+
+model Enrollment {
+  id        String   @id @default(cuid())
+  userId    String
+  courseId  String
+  webinarId String?
+  paymentId String
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([userId])
+}
+
+model Quiz {
+  id              String   @id @default(cuid())
+  webinarId       String
+  question        String
+  optionsJson     String // JSON: [{ id, text }]
+  correctOptionId String?
+  timeLimitSecs   Int      @default(30)
+  createdAt       DateTime @default(now())
+
+  webinar Webinar      @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+  answers QuizAnswer[]
+
+  @@index([webinarId])
+}
+
+model QuizAnswer {
+  id        String   @id @default(cuid())
+  quizId    String
+  userId    String
+  optionId  String
+  isCorrect Boolean
+  createdAt DateTime @default(now())
+
+  quiz Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([quizId, userId])
+}
+
+/// A poll is a quiz without a right answer: the host asks, the room votes, and
+/// everyone sees the tally. Keeping it a separate model (rather than a nullable
+/// `correctOptionId` on Quiz) means the analytics and replay code can treat the
+/// two differently without branching on a flag.
+model Poll {
+  id            String   @id @default(cuid())
+  webinarId     String
+  question      String
+  optionsJson   String // JSON: [{ id, text }]
+  /// Polls stay open until the host closes them; 0 means no auto-close.
+  timeLimitSecs Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  webinar Webinar    @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+  votes   PollVote[]
+
+  @@index([webinarId])
+}
+
+model PollVote {
+  id        String   @id @default(cuid())
+  pollId    String
+  userId    String
+  optionId  String
+  createdAt DateTime @default(now())
+
+  poll Poll @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId])
+}
+
+model Cta {
+  id                 String  @id @default(cuid())
+  webinarId          String
+  courseId           String?
+  title              String
+  description        String?
+  buttonText         String  @default("Enroll Now")
+  priceOverridePaise Int?
+  externalUrl        String?
+
+  /// When true the offer card expands into a form before checkout. The fields
+  /// live in `CtaFormField`; the answers land in `CtaClick.responsesJson`.
+  formEnabled        Boolean @default(false)
+  /// Shown above the form, so the host can explain why they are asking.
+  formIntro          String?
+  /// Label on the button that submits the form and starts checkout.
+  formSubmitText     String  @default("Continue to payment")
+
+  webinar Webinar @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+  course  Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+
+  formFields CtaFormField[]
+  clicks     CtaClick[]
+
+  @@index([webinarId])
+}
+
+/// One question on an offer's pre-payment form.
+///
+/// Deliberately a separate model from `CustomField`: a registration field is
+/// asked once per attendee for the whole webinar, while an offer form is asked
+/// per purchase and belongs to the offer. Sharing the table would mean every
+/// registration form query had to filter out offer questions.
+model CtaFormField {
+  id        String  @id @default(cuid())
+  ctaId     String
+  label     String
+  type      String  @default("text") // text | number | email | phone | textarea | select | checkbox
+  isRequired Boolean @default(false)
+  placeholder String?
+  /// JSON array of `{ label, value }` for `select`.
+  optionsJson String @default("[]")
+  order     Int     @default(0)
+  createdAt DateTime @default(now())
+
+  cta Cta @relation(fields: [ctaId], references: [id], onDelete: Cascade)
+
+  @@index([ctaId, order])
+}
+
+/// One participant opening an offer.
+///
+/// Recorded on the click, not on the purchase, because the host's question is
+/// "how many people were interested" — a click count that only counted buyers
+/// would be a sales report, not an engagement signal. `purchasedAt` is filled
+/// in later if the same person completes checkout.
+model CtaClick {
+  id        String   @id @default(cuid())
+  ctaId     String
+  webinarId String
+  userId    String
+  /// JSON object of `{ fieldId: value }` when the offer has a form.
+  responsesJson String @default("{}")
+  purchasedAt DateTime?
+  createdAt DateTime @default(now())
+
+  cta  Cta  @relation(fields: [ctaId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// One row per person per offer: a second click updates the first rather
+  /// than inflating the count, which is what a host reading "12 clicked"
+  /// expects it to mean.
+  @@unique([ctaId, userId])
+  @@index([webinarId])
+  @@index([ctaId, createdAt])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  webinarId String
+  userId    String
+  text      String
+  createdAt DateTime @default(now())
+
+  webinar Webinar @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([webinarId, createdAt])
+}
+
+/// A recorded session. The timeline is the part that always exists: every
+/// chat message, quiz, offer and hand raise is stamped with milliseconds since
+/// the recording started, which is what lets the replay page re-run the session
+/// as if it were live. Media is optional — when FFmpeg is unavailable or the
+/// host never published, `mediaKind` stays "none" and the replay still works.
+model Recording {
+  id           String   @id @default(cuid())
+  webinarId    String
+  status       String   @default("RECORDING") // RECORDING | PROCESSING | READY | FAILED
+  startedAt    DateTime @default(now())
+  endedAt      DateTime?
+  durationMs   Int      @default(0)
+
+  /// JSON array of { t, type, ...payload } — the replay script.
+  timelineJson String   @default("[]")
+  /// JSON array of chat messages, kept separately so the replay can render a
+  /// chat panel without filtering the whole timeline on every frame.
+  chatJson     String   @default("[]")
+
+  mediaPath    String?
+  mediaBytes   Int?
+  mediaKind    String   @default("none") // none | video
+  error        String?
+
+  createdAt DateTime @default(now())
+
+  webinar Webinar @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+
+  @@index([webinarId, startedAt])
+  @@index([status])
+}
+
+/// A question asked by an attendee during a session.
+///
+/// Q&A is deliberately separate from chat: chat is a stream that scrolls away,
+/// a question is an item that accumulates upvotes and gets answered. Keeping
+/// them in one table would mean every chat line carries moderation state it
+/// never uses.
+model QaQuestion {
+  id        String   @id @default(cuid())
+  webinarId String
+  userId    String
+  text      String
+  /// Denormalised so the panel can sort without a join on every render.
+  upvotes   Int      @default(0)
+  answered  Boolean  @default(false)
+  /// Pinned questions float to the top of the panel for everyone.
+  pinned    Boolean  @default(false)
+  /// Set when a host or moderator marks it answered.
+  answeredAt DateTime?
+  createdAt DateTime @default(now())
+
+  webinar Webinar          @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  votes   QaQuestionVote[]
+
+  @@index([webinarId, createdAt])
+  @@index([webinarId, pinned, upvotes])
+}
+
+/// One upvote per person per question — the unique constraint is the rule.
+model QaQuestionVote {
+  id         String   @id @default(cuid())
+  questionId String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  question QaQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, userId])
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * webinar.gg parity
+ *
+ * Everything below was added to close the gap with webinar.gg's
+ * published feature set. See docs/webinar-gg-parity.md.
+ * ──────────────────────────────────────────────────────────────── */
+
+/// A custom field on the registration / join form.
+///
+/// A field is a row rather than a JSON blob on Webinar because the join form is
+/// read on every page load and the responses have to be exportable per field.
+/// `deletedAt` is a soft delete: a report from last month must not lose a
+/// column because the host tidied the form today.
+model CustomField {
+  id          String    @id @default(cuid())
+  webinarId   String
+  label       String
+  /// text | number | email | phone | date | time | textarea | checkbox |
+  /// radio | select | multi-select
+  type        String
+  isRequired  Boolean   @default(false)
+  placeholder String?
+  /// JSON-encoded default: string | number | boolean | string[]
+  defaultValueJson String?
+  order       Int       @default(0)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  webinar   Webinar             @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+  options   CustomFieldOption[]
+  responses CustomFieldResponse[]
+
+  @@index([webinarId, order])
+}
+
+/// One choice on a select-like custom field.
+model CustomFieldOption {
+  id        String    @id @default(cuid())
+  fieldId   String
+  label     String
+  value     String
+  order     Int       @default(0)
+  deletedAt DateTime?
+
+  field CustomField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  @@index([fieldId, order])
+}
+
+/// One attendee's answer to one custom field.
+///
+/// `valueJson` holds the answer in its natural JSON type so a multi-select
+/// stays an array and a checkbox stays a boolean. Storing everything as text
+/// would force every consumer to re-parse and guess.
+model CustomFieldResponse {
+  id            String   @id @default(cuid())
+  fieldId       String
+  registrationId String
+  valueJson     String
+  createdAt     DateTime @default(now())
+
+  field        CustomField  @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@unique([fieldId, registrationId])
+  @@index([registrationId])
+}
+
+/// A co-host: a moderator scoped to one room, with a permission map.
+///
+/// `permissionsJson` is merged over a default at read time, so adding a new
+/// permission later does not require migrating existing rows.
+model WebinarCohost {
+  id              String    @id @default(cuid())
+  webinarId       String
+  email           String
+  userId          String?
+  name            String?
+  /// pre_webinar | live
+  source          String    @default("pre_webinar")
+  permissionsJson String    @default("{}")
+  inviteSentAt    DateTime?
+  createdAt       DateTime  @default(now())
+
+  webinar Webinar @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([webinarId, email])
+  @@index([webinarId])
+}
+
+/// A recurring webinar series. Each occurrence is a normal Webinar row with
+/// `seriesId` + `occurrenceIndex`, so the rest of the platform works unchanged.
+model WebinarSeries {
+  id            String    @id @default(cuid())
+  baseWebinarId String
+  /// DAILY | WEEKLY | MONTHLY | YEARLY
+  frequency     String
+  interval      Int       @default(1)
+  /// JSON number[] — 0 (Sunday) to 6 (Saturday), for WEEKLY rules.
+  byWeekdayJson String    @default("[]")
+  /// Day of month for MONTHLY rules.
+  byMonthday    Int?
+  count         Int?
+  until         DateTime?
+  timezone      String    @default("Asia/Kolkata")
+  cancelledAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  webinars Webinar[] @relation("WebinarSeriesOccurrences")
+
+  @@index([baseWebinarId])
+}
+
+/// A channel the live room is pushed to: YouTube, Twitch or a custom RTMP
+/// server. Keys are write-only — only `keyHint` is ever returned.
+model StreamDestination {
+  id        String   @id @default(cuid())
+  webinarId String
+  /// youtube | twitch | custom
+  platform  String
+  /// Encrypted at rest. Never returned by any endpoint.
+  streamKey String
+  /// custom only. Also never returned in full — `rtmpHost` is the public part.
+  rtmpUrl   String?
+  rtmpHost  String?
+  /// Last 4 characters of the key, so a host can tell two keys apart.
+  keyHint   String
+  createdAt DateTime @default(now())
+
+  webinar Webinar @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+
+  @@unique([webinarId, platform])
+  @@index([webinarId])
+}
+
+/// A webhook subscription. Deliveries go through WebhookDelivery so a slow
+/// endpoint can never block a socket handler.
+model WebhookEndpoint {
+  id         String    @id @default(cuid())
+  ownerId    String
+  url        String
+  /// JSON string[] of subscribed event names. `["*"]` subscribes to all.
+  eventsJson String    @default("[]")
+  secret     String
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+
+  owner      User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([ownerId])
+}
+
+/// One delivery attempt-set for one event. Retried with backoff until it
+/// succeeds or the attempt budget runs out.
+model WebhookDelivery {
+  id           String    @id @default(cuid())
+  endpointId   String
+  event        String
+  payloadJson  String
+  status       String    @default("PENDING") // PENDING | DELIVERED | FAILED
+  attempts     Int       @default(0)
+  lastError    String?
+  lastStatus   Int?
+  nextAttemptAt DateTime @default(now())
+  deliveredAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
+}
+
+/// A public API token. Only the hash is stored; the plaintext is shown once at
+/// creation, matching webinar.gg.
+model ApiToken {
+  id         String    @id @default(cuid())
+  ownerId    String
+  name       String
+  /// SHA-256 of the token. The token itself is never persisted.
+  tokenHash  String    @unique
+  /// First characters, so a host can identify a token in a list.
+  prefix     String
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId])
+}
+
+/// A short-lived join token, minted server-to-server so an attendee can skip
+/// the join form. 10 minutes, up to 10 uses — matching webinar.gg, because a
+/// single-use token breaks on a page refresh.
+model JoinToken {
+  id        String   @id @default(cuid())
+  webinarId String
+  token     String   @unique
+  email     String
+  name      String
+  phone     String?
+  /// JSON Array<{ fieldId, value }> persisted when the token is redeemed.
+  customResponsesJson String @default("[]")
+  uses      Int      @default(0)
+  maxUses   Int      @default(10)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  webinar Webinar @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+
+  @@index([webinarId])
+  @@index([expiresAt])
+}
+
+/// A scheduled engagement cue from an automation timeline: a poll or an offer
+/// that fires at a fixed offset from the start of the webinar.
+model AutomationCue {
+  id        String   @id @default(cuid())
+  webinarId String
+  /// poll | offer
+  kind      String
+  /// Milliseconds from the start of the webinar.
+  atMs      Int
+  /// JSON payload — the poll question/options or the offer card ref.
+  payloadJson String
+  enabled   Boolean  @default(true)
+  firedAt   DateTime?
+  createdAt DateTime @default(now())
+
+  webinar Webinar @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+
+  @@index([webinarId, atMs])
+}
+
+/// Post-event analytics, computed once when the webinar ends and cached so the
+/// report page does not recompute a time series on every load.
+model WebinarMetrics {
+  id              String   @id @default(cuid())
+  webinarId       String   @unique
+  totalUsers      Int      @default(0)
+  maxLiveUsers    Int      @default(0)
+  durationMinutes Int      @default(0)
+  /// JSON Array<{ t, count }> — the attendance curve.
+  timeSeriesJson  String   @default("[]")
+  /// JSON summary of chat / Q&A / poll activity.
+  engagementJson  String   @default("{}")
+  computedAt      DateTime @default(now())
+
+  webinar Webinar @relation(fields: [webinarId], references: [id], onDelete: Cascade)
+}

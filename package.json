@@ -1,0 +1,38 @@
+{
+  "name": "webinar-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Webinar platform with mediasoup SFU, role-based media visibility, Razorpay payments, quizzes and CTAs",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev -w @webinar/server",
+    "dev:web": "npm run dev -w @webinar/web",
+    "build": "npm run build -w @webinar/server && npm run build -w @webinar/web",
+    "start": "concurrently -n server,web -c cyan,magenta \"npm:start:server\" \"npm:start:web\"",
+    "start:server": "npm run start -w @webinar/server",
+    "start:web": "npm run start -w @webinar/web",
+    "db:push": "npm run db:push -w @webinar/server",
+    "db:seed": "npm run db:seed -w @webinar/server",
+    "db:studio": "npm run db:studio -w @webinar/server",
+    "setup": "npm install && npm run db:push && npm run db:seed",
+    "typecheck": "npm run typecheck -w @webinar/server && npm run typecheck -w @webinar/web",
+    "verify": "node scripts/verify-all.mjs",
+    "verify:reset": "node scripts/reset-demo-webinar.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "@prisma/engines": "^6.19.3",
+    "mediasoup": "^3.31.0",
+    "prisma": "^6.19.3"
+  }
+}

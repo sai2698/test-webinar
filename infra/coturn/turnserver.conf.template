@@ -1,0 +1,45 @@
+# ─────────────────────────────────────────────────────────────
+# coturn configuration — rendered from a template at container start.
+#
+# The coturn image does not run envsubst, so the deploy script renders this
+# file into infra/coturn/turnserver.conf before `docker compose up`.
+#
+# Variables:
+#   PUBLIC_IP            public IPv4 of this host
+#   TURN_PORT            plain TURN (UDP + TCP)
+#   TURN_TLS_PORT        TURN over TLS
+#   TURN_REALM           realm shown to clients
+#   TURN_USERNAME        long-term credential user
+#   TURN_PASSWORD        long-term credential password
+#   TURN_MIN_PORT        start of the relay port range
+#   TURN_MAX_PORT        end of the relay port range
+# ─────────────────────────────────────────────────────────────
+
+listening-port=${TURN_PORT}
+tls-listening-port=${TURN_TLS_PORT}
+
+# Required behind NAT: coturn advertises this address in its relay candidates.
+external-ip=${PUBLIC_IP}
+
+realm=${TURN_REALM}
+server-name=${TURN_REALM}
+
+# Long-term credential mechanism.
+lt-cred-mech
+user=${TURN_USERNAME}:${TURN_PASSWORD}
+
+# Restrict relayed ports to the range opened in the firewall.
+min-port=${TURN_MIN_PORT}
+max-port=${TURN_MAX_PORT}
+
+# Disable multicast peers (security).
+no-multicast-peers
+no-cli
+
+# Logging
+log-file=stdout
+simple-log
+
+# TLS (optional — provide certificates to enable turns:)
+# cert=/etc/coturn/certs/fullchain.pem
+# pkey=/etc/coturn/certs/privkey.pem
