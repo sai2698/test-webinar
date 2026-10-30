@@ -12,7 +12,10 @@ dev.db-journal
 *.db
 *.db-journal
 # Recorded media and the timeline JSON written next to it.
-recordings/
+# Anchored to the repo root on purpose: an unanchored `recordings/` also matches
+# apps/server/src/modules/recordings/, which silently excluded a source file
+# from the repo and broke `tsc` on a fresh clone.
+/recordings/
 .DS_Store
 coverage/
 .turbo/
