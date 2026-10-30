@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRoomStore } from '@/store/roomStore';
 import { useFullscreen, useMediaDevices } from '@/lib/useRoomUi';
+import { canShareScreen, screenShareUnavailableReason } from '@/lib/capabilities';
 import type { AppSocket } from '@/lib/socket';
 import type { BackgroundImage, BackgroundMode } from '@/lib/backgroundEffects';
 import type { VideoFit } from '@/lib/mediaPrefs';
@@ -98,6 +99,27 @@ export function ControlsBar({
 
   const isStaff = role === 'HOST' || role === 'ADMIN' || role === 'MODERATOR';
   const canUseMedia = isStaff || isApprovedSpeaker;
+
+  /**
+   * Screen sharing is desktop-only.
+   *
+   * `getDisplayMedia` does not exist on Android Chrome or on any iOS browser,
+   * so a phone can watch a share but never start one. Rendering the button
+   * anyway meant a tap did nothing at all — the old code swallowed the
+   * resulting TypeError as "user cancelled". Hiding it is the honest UI; the
+   * reason is kept so the tooltip can explain the absence rather than leaving
+   * the user to guess.
+   *
+   * Resolved in an effect, not during render: `navigator` is not available
+   * during server rendering, and reading it inline would make the markup
+   * differ between server and client.
+   */
+  const [screenShareSupported, setScreenShareSupported] = useState(true);
+  const [screenShareReason, setScreenShareReason] = useState<string | null>(null);
+  useEffect(() => {
+    setScreenShareSupported(canShareScreen());
+    setScreenShareReason(screenShareUnavailableReason());
+  }, []);
   const canConfigureMedia =
     canUseMedia &&
     Boolean(
@@ -192,7 +214,7 @@ export function ControlsBar({
         )}
       </IconButton>
 
-      {canUseMedia && (
+      {canUseMedia && screenShareSupported && (
         <IconButton
           label={screenSharing ? 'Stop sharing' : 'Share screen'}
           active={screenSharing}
@@ -203,6 +225,18 @@ export function ControlsBar({
             <path d="M8 20h8M12 16.5V20" strokeLinecap="round" />
           </svg>
         </IconButton>
+      )}
+
+      {/* On a phone the button is gone, so the reason has to live somewhere.
+          A disabled button with a tooltip is worse than nothing on touch —
+          there is no hover to reveal it. */}
+      {canUseMedia && !screenShareSupported && screenShareReason && (
+        <span
+          className="hidden max-w-[9rem] text-[10px] leading-tight text-slate-500 sm:block"
+          title={screenShareReason}
+        >
+          Screen share needs a desktop
+        </span>
       )}
 
       {!isStaff && (

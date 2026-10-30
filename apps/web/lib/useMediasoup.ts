@@ -15,6 +15,7 @@ import {
 } from './consumerRegistry';
 import { BackgroundEffects, type BackgroundImage, type BackgroundMode } from './backgroundEffects';
 import { AudioProcessor, audioConstraints, type AudioProcessingOptions } from './audioProcessor';
+import { screenShareUnavailableReason } from './capabilities';
 import {
   loadPrefs,
   savePrefs,
@@ -274,6 +275,28 @@ export function useMediasoup({ slug, token, onJoined, onError }: UseMediasoupOpt
                     );
                   });
 
+                  /**
+                   * Surface ICE failures.
+                   *
+                   * Without this, a transport that never establishes a path
+                   * fails completely silently: the consumer is created, the
+                   * track is live, `paused` is false, and the tile renders a
+                   * black box. The only clue is `videoWidth === 0`, which
+                   * nothing was checking. A wrong MEDIASOUP_ANNOUNCED_IP or a
+                   * closed UDP range in the cloud firewall looks exactly like
+                   * "the app is broken" until you can see this line.
+                   */
+                  transport.on('connectionstatechange', (state: string) => {
+                    if (state === 'failed') {
+                      console.error(
+                        '[mediasoup] recv transport ICE failed — check MEDIASOUP_ANNOUNCED_IP ' +
+                          'and that the RTC UDP port range is open in the cloud firewall'
+                      );
+                    } else if (state === 'disconnected') {
+                      console.warn('[mediasoup] recv transport disconnected');
+                    }
+                  });
+
                   recvTransportRef.current = transport;
                   resolve();
                 } catch (err) {
@@ -314,6 +337,15 @@ export function useMediasoup({ slug, token, onJoined, onError }: UseMediasoupOpt
                       },
                       (pres) => (pres.ok ? callback({ id: pres.data.producerId }) : errback(new Error(pres.error)))
                     );
+                  });
+
+                  transport.on('connectionstatechange', (state: string) => {
+                    if (state === 'failed') {
+                      console.error(
+                        '[mediasoup] send transport ICE failed — your media is not reaching the SFU. ' +
+                          'Check MEDIASOUP_ANNOUNCED_IP and the RTC UDP port range.'
+                      );
+                    }
                   });
 
                   sendTransportRef.current = transport;
@@ -1186,14 +1218,36 @@ export function useMediasoup({ slug, token, onJoined, onError }: UseMediasoupOpt
   const startScreenShare = useCallback(async () => {
     if (screenProducerRef.current) return;
 
+    /**
+     * Check the capability before calling it.
+     *
+     * `getDisplayMedia` does not exist on mobile browsers — Android Chrome and
+     * every iOS browser omit it entirely. Calling it throws a `TypeError`,
+     * which the old bare `catch` treated as "the user cancelled the picker",
+     * so pressing Share screen on a phone did nothing at all: no error, no
+     * console message, no request. The user concluded the app was broken.
+     */
+    const unavailable = screenShareUnavailableReason();
+    if (unavailable) {
+      onError?.(unavailable);
+      return;
+    }
+
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: { ideal: 15, max: 30 } },
         audio: false,
       });
-    } catch {
-      return; // user cancelled the picker
+    } catch (err) {
+      // A cancellation is not an error and must stay silent. Anything else is
+      // worth telling the user about — a permission denial, or a browser that
+      // exposes the API but refuses to run it.
+      const name = err instanceof DOMException ? err.name : '';
+      if (name === 'NotAllowedError' || name === 'AbortError') return;
+      console.error('[screen] getDisplayMedia failed', err);
+      onError?.('Could not start screen sharing on this device');
+      return;
     }
 
     const track = stream.getVideoTracks()[0];

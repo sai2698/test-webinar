@@ -9,7 +9,6 @@ interface VideoTileProps {
   stream: MediaStream | null;
   name: string;
   role?: string;
-  muted?: boolean;
   isLocal?: boolean;
   micOn?: boolean;
   camOn?: boolean;
@@ -32,7 +31,6 @@ export function VideoTile({
   stream,
   name,
   role,
-  muted = false,
   isLocal = false,
   micOn = true,
   camOn = true,
@@ -123,7 +121,22 @@ export function VideoTile({
           ref={videoRef}
           autoPlay
           playsInline
-          muted={muted || isLocal}
+          /**
+           * Always muted — and this is load-bearing, not a nicety.
+           *
+           * Audio and video are separate producers, so this element only ever
+           * carries a video track. Remote audio is played by <RemoteAudio/>,
+           * one <audio> element per audio producer.
+           *
+           * Leaving it unmuted made the browser's autoplay policy apply: an
+           * unmuted <video> may not start without a user gesture, so `play()`
+           * rejected, the element stayed paused, and the browser painted its
+           * own play-button overlay across the tile. That is exactly what a
+           * participant saw when the host turned their camera on — a grey box
+           * with a play triangle, no console error, no failed request, because
+           * nothing had actually failed. Muting makes autoplay unconditional.
+           */
+          muted
           style={mirrored ? { transform: 'scaleX(-1)' } : undefined}
           className={`h-full w-full ${objectFitClass} ${
             hasVideo ? 'opacity-100' : 'opacity-0'

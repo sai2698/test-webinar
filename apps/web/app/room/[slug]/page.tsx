@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useRoomStore } from '@/store/roomStore';
 import { useMediasoup } from '@/lib/useMediasoup';
 import { VideoGrid } from '@/components/VideoGrid';
+import { RemoteAudio } from '@/components/RemoteAudio';
 import { ChatPanel } from '@/components/ChatPanel';
 import { ParticipantList } from '@/components/ParticipantList';
 import { ControlsBar } from '@/components/ControlsBar';
@@ -380,6 +381,11 @@ export default function RoomPage() {
               sidebar and covers the control bar on a phone. */}
           <div className="relative min-h-0 flex-1 p-3" ref={stageRef}>
             {waiting ? <WaitingRoom title={webinarTitle ?? ''} startsAt={startsAt} /> : <VideoGrid />}
+            {/* Remote audio is a separate producer from remote video, so it
+                needs its own sink. Mounted outside the grid on purpose: it must
+                keep playing while the stage shows the waiting room, and it must
+                not unmount when a tile scrolls out of view. */}
+            <RemoteAudio />
             <WatermarkOverlay />
             <EnrollmentBanner />
             <CtaOverlay />
