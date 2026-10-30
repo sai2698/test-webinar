@@ -8,6 +8,7 @@
 #   ./deploy-native.sh down        stop the services
 #   ./deploy-native.sh restart     restart without rebuilding
 #   ./deploy-native.sh rebuild     rebuild and restart
+#   ./deploy-native.sh build       build only (retry a failed build)
 #   ./deploy-native.sh logs [svc]  follow logs (api | web | nginx | coturn)
 #   ./deploy-native.sh status      service + health status
 #   ./deploy-native.sh ports       print the ports to whitelist
@@ -135,6 +136,96 @@ preflight() {
     warn "g++ / python3 not found — mediasoup may fail if it has to build its worker."
     warn "Install with: apt-get install -y build-essential python3"
   fi
+
+  local mem
+  mem="$(mem_total_mb)"
+  if [ "$mem" -lt 2048 ]; then
+    warn "Only ${mem} MB RAM. The Next.js build needs ~1.5 GB and will be killed"
+    warn "by the OOM killer without swap. ensure_swap() will add some, but a"
+    warn "1 GB box is a test environment, not a production one."
+  fi
+}
+
+# ── memory helpers ───────────────────────────────────────────
+# Total RAM in MB. /proc/meminfo is always present on Linux; the fallbacks are
+# for odd containers.
+mem_total_mb() {
+  local kb
+  kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+  if [ "${kb:-0}" -gt 0 ] 2>/dev/null; then
+    echo $(( kb / 1024 ))
+    return
+  fi
+  echo 0
+}
+
+swap_total_mb() {
+  local kb
+  kb="$(awk '/^SwapTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+  if [ "${kb:-0}" -gt 0 ] 2>/dev/null; then
+    echo $(( kb / 1024 ))
+    return
+  fi
+  echo 0
+}
+
+# A 1 vCPU / 1 GB VPS cannot build this project without swap: `next build`
+# peaks around 1.2-1.5 GB and the kernel kills it. Adding a swapfile is the
+# difference between a working deploy and an unexplained exit 137.
+ensure_swap() {
+  local mem swap want_mb
+  mem="$(mem_total_mb)"
+  swap="$(swap_total_mb)"
+
+  # Plenty of RAM and some swap already — nothing to do.
+  if [ "$mem" -ge 2048 ] && [ "$swap" -gt 0 ]; then
+    return 0
+  fi
+  if [ "$mem" -ge 4096 ]; then
+    return 0
+  fi
+
+  # Target: enough swap that RAM + swap clears ~3 GB.
+  want_mb=$(( 3072 - mem ))
+  [ "$want_mb" -lt 1024 ] && want_mb=1024
+  [ "$want_mb" -gt 4096 ] && want_mb=4096
+
+  if [ "$swap" -ge "$want_mb" ]; then
+    ok "swap already sufficient (${swap} MB)"
+    return 0
+  fi
+
+  if [ -e /swapfile ]; then
+    warn "/swapfile exists but is not active — trying to enable it."
+    $SUDO swapon /swapfile 2>/dev/null || true
+    if [ "$(swap_total_mb)" -gt 0 ]; then
+      ok "swap enabled ($(swap_total_mb) MB)"
+      return 0
+    fi
+    warn "Could not enable /swapfile; leaving it alone."
+    return 0
+  fi
+
+  info "Adding a ${want_mb} MB swapfile (RAM is ${mem} MB — the build needs it)…"
+
+  # fallocate is instant but unsupported on some filesystems (notably ZFS and
+  # some overlay setups); dd always works.
+  if ! $SUDO fallocate -l "${want_mb}M" /swapfile 2>/dev/null; then
+    $SUDO dd if=/dev/zero of=/swapfile bs=1M count="$want_mb" status=none
+  fi
+  $SUDO chmod 600 /swapfile
+  $SUDO mkswap /swapfile >/dev/null
+  $SUDO swapon /swapfile
+
+  # Persist across reboots, but only once.
+  if ! grep -qE '^/swapfile[[:space:]]' /etc/fstab 2>/dev/null; then
+    printf '/swapfile none swap sw 0 0\n' | $SUDO tee -a /etc/fstab >/dev/null
+  fi
+
+  # Prefer RAM, but let the build spill to swap instead of dying.
+  $SUDO sysctl -qw vm.swappiness=10 2>/dev/null || true
+
+  ok "swap enabled ($(swap_total_mb) MB total)"
 }
 
 # ── public IP detection ──────────────────────────────────────
@@ -567,8 +658,33 @@ build_apps() {
 
   # Built as the invoking user, not the service user: node_modules and .next
   # stay owned by whoever deployed, and the service only needs read access.
+  #
+  # On a small VPS this is the step that hurts. Three things keep it alive:
+  #   1. swap (ensure_swap) so the OOM killer has somewhere to go
+  #   2. a capped V8 heap so node collects instead of growing to the limit
+  #   3. --maxsockets 1 so npm does not open 16 parallel connections on 1 vCPU
+  ensure_swap
+
+  local mem
+  mem="$(mem_total_mb)"
+  local heap_mb=2048
+  if [ "$mem" -gt 0 ] && [ "$mem" -lt 2048 ]; then
+    # Leave headroom for the OS; the rest is the build's budget.
+    heap_mb=$(( mem - 256 ))
+    [ "$heap_mb" -lt 768 ] && heap_mb=768
+  fi
+  export NODE_OPTIONS="--max-old-space-size=${heap_mb}"
+  info "Node heap capped at ${heap_mb} MB (RAM: ${mem} MB, swap: $(swap_total_mb) MB)"
+
+  # npm's default concurrency is fine on 8 cores and pathological on 1.
+  local npm_flags=(--include=dev --no-audit --no-fund)
+  if [ "$(nproc 2>/dev/null || echo 1)" -le 2 ]; then
+    npm_flags+=(--maxsockets 1)
+    info "Low core count — installing dependencies serially (this is slow, be patient)"
+  fi
+
   info "Installing dependencies…"
-  npm ci --include=dev || npm install --include=dev
+  npm ci "${npm_flags[@]}" || npm install "${npm_flags[@]}"
 
   info "Generating the Prisma client…"
   npx prisma generate --schema apps/server/prisma/schema.prisma
@@ -579,13 +695,22 @@ build_apps() {
   info "Seeding the admin account…"
   npx tsx apps/server/prisma/seed.ts || warn "seed skipped (already applied)"
 
-  info "Building (NEXT_PUBLIC_* are inlined here — this is the slow step)…"
+  # Build the two workspaces separately rather than via the root `build` script.
+  # The root script chains them with &&, so a failure in the second one gives no
+  # clue which half died, and on a small box it is useful to know that the API
+  # compiled before the web build started swapping.
+  info "Building the API (tsc)…"
+  npm run build -w @webinar/server
+
+  info "Building the web client (next build — the slow, memory-hungry step)…"
   # These must be present at build time or the browser bundle points at the
   # wrong host. They come from .env, which is why install writes it first.
   NEXT_PUBLIC_API_URL="$(env_get NEXT_PUBLIC_API_URL)" \
   NEXT_PUBLIC_SOCKET_URL="$(env_get NEXT_PUBLIC_SOCKET_URL)" \
   NEXT_PUBLIC_RZP_KEY_ID="$(env_get NEXT_PUBLIC_RZP_KEY_ID)" \
-    npm run build
+  NEXT_TELEMETRY_DISABLED=1 \
+  CI=1 \
+    npm run build -w @webinar/web
 
   # The build just rewrote .next and the SQLite file; hand them back.
   local group
@@ -762,6 +887,16 @@ cmd_rebuild() {
   wait_healthy || true
 }
 
+# Build only. Useful when `install` died in the build step on a small VPS: the
+# .env, the service user and the database are already in place, so re-running
+# the whole install would be wasted work.
+cmd_build() {
+  preflight
+  load_env
+  build_apps
+  ok "Build finished. Start it with: ./deploy-native.sh restart"
+}
+
 cmd_logs() {
   ensure_root
   local svc="${1:-api}"
@@ -870,6 +1005,7 @@ ${B}Webinar platform — native deployment (no Docker)${R}
   ./deploy-native.sh down        Stop the services
   ./deploy-native.sh restart     Restart without rebuilding
   ./deploy-native.sh rebuild     Rebuild and restart
+  ./deploy-native.sh build       Build only (retry a failed build)
   ./deploy-native.sh logs [svc]  Follow logs (api, web, nginx, coturn)
   ./deploy-native.sh status      Service and health status
   ./deploy-native.sh ports       Print the ports to whitelist
@@ -892,6 +1028,7 @@ main() {
     down)     cmd_down "$@" ;;
     restart)  cmd_restart "$@" ;;
     rebuild)  cmd_rebuild "$@" ;;
+    build)    cmd_build "$@" ;;
     logs)     cmd_logs "$@" ;;
     status)   cmd_status "$@" ;;
     ports)    print_ports "$@" ;;

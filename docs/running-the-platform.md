@@ -544,8 +544,8 @@ git clone <your-repo> /opt/webinar && cd /opt/webinar
 sudo ./deploy-native.sh install
 ```
 
-`install` is interactive — it asks for the domain, whether to serve HTTPS, and
-which database to use — then does everything else unattended:
+`install` is interactive — it asks for the domain and which database to use —
+then does everything else unattended:
 
 1. Checks Node ≥ 20, systemd, `openssl`, `envsubst`, and warns about a missing
    C++ toolchain (mediasoup may need to compile its worker).
@@ -555,8 +555,8 @@ which database to use — then does everything else unattended:
 3. Creates the `webinar` system user.
 4. Installs and configures PostgreSQL (or points `DATABASE_URL` at SQLite) and
    rewrites the Prisma provider from `sqlite` to `postgresql`.
-5. Runs `npm ci`, `prisma generate`, `prisma db push`, the seed, and
-   `npm run build` — with `NEXT_PUBLIC_*` exported, so the browser bundle points
+5. Runs `npm ci`, `prisma generate`, `prisma db push`, the seed, and the two
+   workspace builds — with `NEXT_PUBLIC_*` exported, so the browser bundle points
    at the right host.
 6. Writes `webinar-api.service` and `webinar-web.service`, enables and starts them.
 7. Installs nginx, renders `infra/nginx/templates/default.conf.template` into
@@ -566,6 +566,35 @@ which database to use — then does everything else unattended:
    `/etc/coturn/turnserver.conf`, and enables the service.
 9. Polls `/api/health` until the API answers, then prints the port whitelist.
 
+### Small VPS (1 vCPU / 1 GB)
+
+The build step is the one that hurts. `next build` peaks around 1.2–1.5 GB, so on
+a 1 GB box the kernel's OOM killer terminates it and you see an unexplained
+exit 137 or a silent stop. `build_apps()` handles this automatically:
+
+- **`ensure_swap()`** adds a swapfile sized to bring RAM + swap to ~3 GB, and
+  persists it in `/etc/fstab`. It is a no-op on a box with ≥ 4 GB RAM.
+- **`NODE_OPTIONS=--max-old-space-size`** is capped to `RAM − 256 MB` (floor
+  768 MB) so V8 collects instead of growing until it is killed.
+- **`npm ci --maxsockets 1`** on ≤ 2 cores, so npm does not open 16 parallel
+  connections on a single vCPU.
+- The API and web builds run **separately**, so a failure tells you which half
+  died.
+
+Expect the build to take 10–20 minutes on 1 vCPU. It is not hung — `top` will
+show `node` at 100% CPU. If it still dies, add swap manually and retry just the
+build:
+
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile \
+  && sudo mkswap /swapfile && sudo swapon /swapfile
+sudo ./deploy-native.sh build     # build only, no reinstall
+```
+
+A 1 vCPU / 1 GB box is fine for testing but cannot serve a real webinar: the
+SFU needs cores for media forwarding and the RTC port range needs memory per
+peer. See the capacity section below.
+
 ### Subcommands
 
 | Command | What it does |
@@ -574,6 +603,7 @@ which database to use — then does everything else unattended:
 | `up` / `down` | Start / stop the API and web services |
 | `restart` | Restart without rebuilding |
 | `rebuild` | Rebuild and restart (after a code change) |
+| `build` | Build only — retry a build that failed, without reinstalling |
 | `logs [svc]` | Follow logs — `api`, `web`, `nginx`, `coturn` |
 | `status` | `systemctl is-active` for all four plus a health probe |
 | `ports` | Print the ports to whitelist, with the capacity math |
